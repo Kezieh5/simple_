@@ -1,0 +1,1 @@
+The simple shell project. The project was completed using C language, shell and Betty linter. hsh is a simple UNIX command language interpreter that reads commands from either a file or standard input and excutes them

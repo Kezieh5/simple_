@@ -1,71 +1,135 @@
-#include "shell.h"
+#include "shell1.h"
+
+void sig_handler(int sig);
+int execute(char **args, char **front);
 
 /**
- * Frees memory used by the data structure.
- *
- * @param datash Pointer to the data structure.
+ * sig_handler - Prints a new prompt upon a signal.
+ * @sig: The signal.
  */
-void free_data_structure(data_shell *datash)
+void sig_handler(int sig)
 {
-	unsigned int v;
+	char *new_prompt = "\n$ ";
 
-	for (v = 0; datash->_environ[v]; v++)
-	{
-		free(datash->_environ[v]);
-	}
-
-	free(datash->_environ);
-	free(datash->pid);
+	(void)sig;
+	signal(SIGINT, sig_handler);
+	write(STDIN_FILENO, new_prompt, 3);
 }
 
 /**
- * Initializes the data structure.
+ * execute - Executes a command in a child process.
+ * @args: An array of arguments.
+ * @front: A double pointer to the beginning of args.
  *
- * @param datash Pointer to the data structure.
- * @param av Argument vector.
+ * Return: If an error occurs - a corresponding error code.
+ *         O/w - The exit value of the last executed command.
  */
-void initialize_data_structure(data_shell *datash, char **av)
+int execute(char **args, char **front)
 {
-	unsigned int z;
+	pid_t child_pid;
+	int status, flag = 0, ret = 0;
+	char *command = args[0];
 
-	datash->av = av;
-	datash->input = NULL;
-	datash->args = NULL;
-	datash->status = 0;
-	datash->counter = 1;
-
-	for (z = 0; environ[z]; z++)
-		;
-
-	datash->_environ = malloc(sizeof(char *) * (z + 1));
-
-	for (z = 0; environ[z]; z++)
+	if (command[0] != '/' && command[0] != '.')
 	{
-		datash->_environ[z] = _strdup(environ[z]);
+		flag = 1;
+		command = get_location(command);
 	}
 
-	datash->_environ[z] = NULL;
-	datash->pid = aux_itoa(getpid());
+	if (!command || (access(command, F_OK) == -1))
+	{
+		if (errno == EACCES)
+			ret = (create_error(args, 126));
+		else
+			ret = (create_error(args, 127));
+	}
+	else
+	{
+		child_pid = fork();
+		if (child_pid == -1)
+		{
+			if (flag)
+				free(command);
+			perror("Error child:");
+			return (1);
+		}
+		if (child_pid == 0)
+		{
+			execve(command, args, environ);
+			if (errno == EACCES)
+				ret = (create_error(args, 126));
+			free_env();
+			free_args(args, front);
+			free_alias_list(aliases);
+			_exit(ret);
+		}
+		else
+		{
+			wait(&status);
+			ret = WEXITSTATUS(status);
+		}
+	}
+	if (flag)
+		free(command);
+	return (ret);
 }
 
 /**
- * Entry point of the program.
+ * main - Runs a simple UNIX command interpreter.
+ * @argc: The number of arguments supplied to the program.
+ * @argv: An array of pointers to the arguments.
  *
- * @param ac Argument count.
- * @param av Argument vector.
- *
- * @return 0 on success.
+ * Return: The return value of the last executed command.
  */
-int main(int ac, char **av)
+int main(int argc, char *argv[])
 {
-	data_shell datash;
-	(void) ac;
+	int ret = 0, retn;
+	int *exe_ret = &retn;
+	char *prompt = "$ ", *new_line = "\n";
+	
 
-	signal(SIGINT, get_sigint);
-	initialize_data_structure(&datash, av);
-	shell_loop(&datash);
-	free_data_structure(&datash);
-	if (datash.status < 0)
-		return (255);
-	return (datash.status);
+	name = argv[0];
+	hist = 1;
+	aliases = NULL;
+	signal(SIGINT, sig_handler);
+
+	*exe_ret = 0;
+	environ = _copyenv();
+	if (!environ)
+		exit(-100);
+
+	if (argc != 1)
+	{
+		ret = proc_file_commands(argv[1], exe_ret);
+		free_env();
+		free_alias_list(aliases);
+		return (*exe_ret);
+	}
+
+	if (!isatty(STDIN_FILENO))
+	{
+		while (ret != END_OF_FILE && ret != EXIT)
+			ret = handle_args(exe_ret);
+		free_env();
+		free_alias_list(aliases);
+		return (*exe_ret);
+	}
+
+	while (1)
+	{
+		write(STDOUT_FILENO, prompt, 2);
+		ret = handle_args(exe_ret);
+		if (ret == END_OF_FILE || ret == EXIT)
+		{
+			if (ret == END_OF_FILE)
+				write(STDOUT_FILENO, new_line, 1);
+			free_env();
+			free_alias_list(aliases);
+			exit(*exe_ret);
+		}
+	}
+
+	free_env();
+	free_alias_list(aliases);
+	return (*exe_ret);
 }
